@@ -1,49 +1,45 @@
+//IDENTAÇÃO ESTILO ALLMAN
 #include <U8g2lib.h> // Biblioteca para utilizaçao do I2C
 #include <Wire.h>    // Biblioteca para utilizaçao do I2C
-#include <MFRC522.h> //Biblioteca para utilização do circuito RFID MFRC522
-#include <SPI.h>     //Biblioteca para utilização do protocolo SPI
-#include <SoftwareSerial.h>// Biblioteca para utilização do módulo Bluetooth HC-05
+#include <MFRC522.h> // Biblioteca para utilização do RFID
+#include <SPI.h>     // Biblioteca para utilização do SPI
+#include <SoftwareSerial.h> // Biblioteca para utilização do HC-05
 
-#define BOTTOM_RETIRAR 5
-#define BOTTOM_FINAL 4
+#define BOTTOM_RETIRAR 5 // Botão para alternar modo retirar/adicionar
+#define BOTTOM_FINAL 4   // Botão para finalizar pedido
 
-#define LED_TEST 6
+#define LED_TEST 6 // LED indicador de modo retirar
 
-#define C_SELECT 10 // Pino SDA do módulo;
-#define RESET 9     // Pino RESET do módulo MFRC522;
+#define C_SELECT 10 // Pinos RFID
+#define RESET 9 
 
-MFRC522 rfid(C_SELECT, RESET); // Declaração do módulo com o nome "rfid"
+MFRC522 rfid(C_SELECT, RESET); // Instancia o módulo RFID
+U8X8_SSD1306_128X32_UNIVISION_HW_I2C displayLED(U8X8_PIN_NONE); // Display OLED 128x32 I2C
+SoftwareSerial BT(2, 3); //Bluetooth
 
-U8X8_SSD1306_128X32_UNIVISION_HW_I2C displayLED(U8X8_PIN_NONE);
+String serial = ""; // Armazena entrada vinda do serial
+String dados = ""; // Armazena endereço da tag RFID
 
-SoftwareSerial BT(2, 3); //13 = RX; 12 = TX; - TX DO MÓDULO VAI NA 13, RX DO MÓDULO VAI NA 12;
+unsigned long tempo_anterior = 0; // Controle de tempo RFID
+unsigned long tempo_botao_anterior = 0; // Controle de tempo do botão retirar
+unsigned long tempo_botao2_anterior = 0; // Controle de tempo do botão finalizar
 
-char info;
-String serial = "";
+float total; // Valor total calculado
+int id_pedido = 0; // Contador de pedidos realizados
 
-String dados = ""; // String vazia para armazenar o endereço da tag/cartão RFID;
+bool fim = false; // Indica se pedido foi finalizado
+bool retirar = false; // Indica modo retirar (true) ou adicionar (false)
+bool estado_anterior = false; // Guarda último estado do botão retirar
+bool estado_anterior2 = false; // Guarda último estado do botão finalizar
 
-unsigned long tempo_anterior = 0;
-unsigned long tempo_botao_anterior = 0;
-unsigned long tempo_botao2_anterior = 0;
-
-float total;
-
-int id_pedido = 0;
-
-bool fim = false;
-bool retirar = false;
-bool estado_anterior = false;
-bool estado_anterior2 = false;
-
-struct Produtos
+struct Produtos // Estrutura de produtos
 {
-  String ID_produto;
-  String nome;
-  float preco;
-  int quant;
+  String ID_produto; // ID RFID vinculado ao produto
+  String nome;       // Nome do produto
+  float preco;       // Preço unitário
+  int quant;         // Quantidade
 };
-Produtos produto[] = 
+Produtos produto[] = // Cadastro dos produtos
 {
   {" 39 9D F5 03", "Queijo", 17.9, 0}, 
   {" BD 6A 02 04", "Picanha", 77.5, 0}, 
@@ -52,30 +48,32 @@ Produtos produto[] =
   {" 09 14 0F 02", "Tang Stit liru", 1.29, 0}
 };
 
-void print_display()
+void print_display()// Função responsável por otimizar o uso do display no código
 {
   int i;
-  if (dados == " 39 9D F5 03") i = 0; 
+  if (dados == " 39 9D F5 03") i = 0; // identifica produto pelo UID
   if (dados == " BD 6A 02 04") i = 1; 
   if (dados == " FC 6A 00 04") i = 2; 
   if (dados == " F9 63 7E 05") i = 3; 
   if (dados == " 09 14 0F 02") i = 4; 
 
-  if (retirar == true) 
+  if (retirar == true) // modo remover quantidade ativo
   {
-    if (produto[i].quant > 0)
+    if (produto[i].quant > 0) // evita quantidade negativa
     {
       produto[i].quant--;
     }
   } 
-  else 
+  else // modo adicionar quantidade ativo
   {
     produto[i].quant++;
   }
-
   total = produto[i].preco * produto[i].quant;
-  for (int L = 1; L < 4; L++) displayLED.clearLine(L);  // limpa cada linha do display com excessao da primeira linha.
-  displayLED.setCursor(0, 1);
+  for (int L = 1; L < 4; L++) // limpa linhas inferiores do display
+  {
+    displayLED.clearLine(L);
+  }
+  displayLED.setCursor(0, 1);// Printa Produto, Quantidade e Valor total no display
   displayLED.print(produto[i].nome);
   displayLED.setCursor(0, 2);
   displayLED.print("Qtd. x");
@@ -85,10 +83,11 @@ void print_display()
   displayLED.print(total);
 }
 
-void displayRESET()
+void displayRESET()// reseta o display no inicio da execução e a cada novo pedido
 {
   retirar = false;
-  for (int j = 0; j < 5; j++)
+
+  for (int j = 0; j < 5; j++) // reseta quantidades de todos os produtos
   {
     produto[j].quant = 0;
   }
@@ -104,77 +103,89 @@ void setup()
 {
   Serial.begin(9600);
   BT.begin(38400);
-  SPI.begin(); // Inicialização do protocolo SPI;
+  SPI.begin(); // inicializa SPI
 
-  displayLED.begin(); // Inicializa o display
-  displayLED.setPowerSave(0); // Liga o display (desliga o modo de economia de energia)
-  displayLED.setFont(u8x8_font_chroma48medium8_r); // Escolhe uma fonte
+  displayLED.begin(); // inicializa display
+  displayLED.setPowerSave(0); // desativa economia de energia
+  displayLED.setFont(u8x8_font_chroma48medium8_r); // define fonte padrão
 
-  rfid.PCD_Init(); // Inicialização do módulo RFID;
+  rfid.PCD_Init(); // inicializa o RFID
   Serial.println("RFID: Operacional");
 
   pinMode(BOTTOM_RETIRAR, INPUT);
   pinMode(BOTTOM_FINAL, INPUT);
-
   pinMode(LED_TEST, OUTPUT);
-  displayRESET();
+
+  displayRESET(); // zera interface do display
 }
 
 void loop()
 {
-  if(BT.available())
+  if(Serial.available()) // verifica dados recebidos via Serial
   {
-    info = BT.read();
-    Serial.print(info);
-  }
-  if(Serial.available())
-  {
-    serial = Serial.readString(); // lê até Enter
-    BT.print(serial); // envia de uma vez
+    serial = Serial.readString();//leitura
+    BT.print(serial); //print
   }
 
-  if(retirar == false && digitalRead(BOTTOM_RETIRAR) == 1 && (millis() - tempo_botao_anterior >= 500)) {retirar = true; tempo_botao_anterior = millis(); } 
-  if(retirar == true && digitalRead(BOTTOM_RETIRAR) == 1 && (millis() - tempo_botao_anterior >= 500)) {retirar = false; tempo_botao_anterior = millis(); }
-
-  if (retirar != estado_anterior) // Só entra aqui quando o botão muda o modo
+  if(retirar == false && digitalRead(BOTTOM_RETIRAR) == 1 && (millis() - tempo_botao_anterior >= 500)) // ativa modo retirar
   {
-    estado_anterior = retirar; // Atualiza o estado anterior
+    retirar = true; 
+    tempo_botao_anterior = millis(); 
+  } 
+  if(retirar == true && digitalRead(BOTTOM_RETIRAR) == 1 && (millis() - tempo_botao_anterior >= 500)) // desativa modo retirar
+  {
+    retirar = false; 
+    tempo_botao_anterior = millis(); 
+  }
+  if (retirar != estado_anterior) // atualiza display (apenas a primeira linha) ao trocar de modo
+  {
+    estado_anterior = retirar; // salva estado atual
 
-    displayLED.clearLine(0);  // Limpa apenas a primeira linha
+    displayLED.clearLine(0);
     displayLED.setCursor(0, 0);
-    if (retirar == true)
+
+    if (retirar == true) // mostra modo remover
     {
       digitalWrite(LED_TEST, 1);
       displayLED.print("Item(Remover):");
     }
-    else
+    else // mostra modo adicionar
     {
       digitalWrite(LED_TEST, 0);
       displayLED.print("Item(Adicionar):");
     }
   }
   
-  if(fim == false && digitalRead(BOTTOM_FINAL) == 1 && (millis() - tempo_botao2_anterior >= 500)) {fim = true; tempo_botao2_anterior = millis(); }
-  if(fim == true && digitalRead(BOTTOM_FINAL) == 1 && (millis() - tempo_botao2_anterior >= 500)) {fim = false; tempo_botao2_anterior = millis(); }
-
-  if (fim != estado_anterior2)
+  if(fim == false && digitalRead(BOTTOM_FINAL) == 1 && (millis() - tempo_botao2_anterior >= 500)) // ativa modo final
+  {
+    fim = true; 
+    tempo_botao2_anterior = millis(); 
+  }
+  if(fim == true && digitalRead(BOTTOM_FINAL) == 1 && (millis() - tempo_botao2_anterior >= 500)) // desativa modo final
+  {
+    fim = false; 
+    tempo_botao2_anterior = millis(); 
+  }
+  if (fim != estado_anterior2) // mudança no estado de finalização
   {
     estado_anterior2 = fim;
 
-    if(fim == true)
+    if(fim == true) // imprime resumo da compra
     {
       id_pedido++;
       int quant_tot = 0;
       total = 0;
 
-      BT.println("---Resumo da Compra---");
+      BT.println("---Resumo da Compra---");// Bloco do resumo da compra a ser enviado via Bluetooth
       BT.println();
-      if (id_pedido < 10) {BT.print("ID Ped. 00"); } else if (id_pedido >= 10 && id_pedido < 100) {BT.print("ID Ped. 0"); } else {BT.print("ID Ped. "); }
+      if (id_pedido < 10) {BT.print("ID Ped. 00"); } 
+      else if (id_pedido >= 10 && id_pedido < 100) {BT.print("ID Ped. 0"); } 
+      else {BT.print("ID Ped. "); }
       BT.println(id_pedido);
       BT.println();
-      for (int j = 0; j < 5; j++)
+      for (int j = 0; j < 5; j++) // percorre produtos e imprime itens válidos
       {
-        if (produto[j].quant > 0)
+        if (produto[j].quant > 0) // apenas produtos comprados
         {
           BT.print(produto[j].quant);
           BT.print("x ");
@@ -187,13 +198,13 @@ void loop()
       }
       BT.println();
       BT.print("Total. R$");
-      for (int j = 0; j < 5; j++)
+      for (int j = 0; j < 5; j++) // soma total
       {
         total = (produto[j].quant * produto[j].preco) + total;
       }
       BT.println(total);
       BT.print("Qtd Total de itens: ");
-      for (int j = 0; j < 5; j++)
+      for (int j = 0; j < 5; j++) // soma quantidades totais
       {
         quant_tot = produto[j].quant + quant_tot;
       }
@@ -204,68 +215,70 @@ void loop()
       total = 0;
       quant_tot = 0;
 
-      displayLED.clear();
+      displayLED.clear(); // Bloco do resumo da compra no display
       displayLED.setCursor(0, 0);
       displayLED.print("Resumo da Compra");
       displayLED.setCursor(0, 1);
       displayLED.print("Tot. R$");
-      for (int j = 0; j < 5; j++)
+      for (int j = 0; j < 5; j++) // recalcula total para display
       {
         total = (produto[j].quant * produto[j].preco) + total;
       }
       displayLED.print(total);
-
       displayLED.setCursor(0, 2);
       displayLED.print("Qtd Tot. x");
-      for (int j = 0; j < 5; j++)
+      for (int j = 0; j < 5; j++) // recalcula qtd total para display
       {
         quant_tot = produto[j].quant + quant_tot;
       }
       displayLED.print(quant_tot);
     }
-    else if (fim == false) {displayRESET(); }
+    else if (fim == false) // retorna para modo inicial
+    {
+      displayRESET(); 
+    }
   }
 
-  if (millis() - tempo_anterior >= 2000)// Temporização que faz com que o RFID realize uma leitura a cada 2 seg;
+  if (millis() - tempo_anterior >= 2000) // temporiza leitura RFID
   { 
-    tempo_anterior = millis(); // Variável tempo_anterior sendo "zerada";
+    tempo_anterior = millis(); // reinicia contador
 
-    if (!rfid.PICC_IsNewCardPresent())// If para testar caso o módulo NÃO tenha lido nenhum cartão/tag;
+    if (!rfid.PICC_IsNewCardPresent()) // sem novo cartão
     { 
       return;
     }
 
-    if (!rfid.PICC_ReadCardSerial())// If para testar caso o módulo NÃO tenha conseguido ler o endereço do cartão/tag;
+    if (!rfid.PICC_ReadCardSerial()) // erro de leitura
     { 
       return;
     }
   }
 
-  if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial())
+  if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) // nova tag detectada
   {
-    if (fim == true)
+    if (fim == true) // reinicia após finalização
     {
       fim = false;
       estado_anterior2 = false;
-
       displayRESET();
     }
+
     Serial.print("Endereco da TAG (HEX): ");
 
     for (byte i = 0; i < rfid.uid.size; i++)
-    { // Loop que percorre o endereço lido no RFID como um vetor;
+    {
       if (rfid.uid.uidByte[i] < 0x10)
       {
         Serial.print(" 0");
       }
-      else
+      else // imprime espaço
       {
         Serial.print(" ");
       }
 
-      Serial.print(rfid.uid.uidByte[i], HEX); // Código para conversão dos dados lidos no módulo, de binário para HEX;
+      Serial.print(rfid.uid.uidByte[i], HEX); 
 
-      if (rfid.uid.uidByte[i] < 0x10)
+      if (rfid.uid.uidByte[i] < 0x10) 
       {
         dados.concat(String(" 0"));
       }
@@ -273,14 +286,14 @@ void loop()
       {
         dados.concat(String(" "));
       }
+
       dados.concat(String(rfid.uid.uidByte[i], HEX));
     }
-    dados.toUpperCase(); // Colocando todos os valores do endereço em caixa alta
-    Serial.println(); // Printa os valores de endereço no Console Serial;
+    dados.toUpperCase(); // converte UID para maiúsculo
+    Serial.println(); // quebra de linha
+    rfid.PICC_HaltA(); // pausa leitura da tag
 
-    rfid.PICC_HaltA(); // Faz com que o endereço de um cartão ou tag seja lido apenas uma vez
-
-    print_display();
+    print_display(); // atualiza display com item
   }
-  dados = "";
+  dados = ""; // limpa buffer de leitura
 }
